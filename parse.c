@@ -72,22 +72,28 @@ static Type *find_tag(char *name) {
   return NULL;
 }
 
-static Var *add_lvar(Type *ty, char *name) {
+static Var *new_var(Type *ty, char *name, bool is_local, char *data) {
   Var *var = calloc(1, sizeof(Var));
   var->ty = ty;
-  var->is_local = true;
+  var->is_local = is_local;
   var->name = name;
-  map_put(env->vars, name, var);
+  var->data = data;
+  return var;
+}
+
+static Var *add_var_to_lvars(Var *var) {
+  assert(var->is_local);
+  map_put(env->vars, var->name, var);
   vec_push(lvars, var);
   return var;
 }
 
+static Var *add_lvar(Type *ty, char *name) {
+  return add_var_to_lvars(new_var(ty, name, true, NULL));
+}
+
 static Var *add_gvar(Type *ty, char *name, char *data, bool is_extern) {
-  Var *var = calloc(1, sizeof(Var));
-  var->ty = ty;
-  var->is_local = false;
-  var->name = name;
-  var->data = data;
+  Var *var = new_var(ty, name, false, data);
   map_put(env->vars, name, var);
   if (!is_extern)
     vec_push(prog->gvars, var);
@@ -714,7 +720,7 @@ static Var *param_declaration() {
   ty = node->ty;
   if (ty->ty == ARY)
     ty = ptr_to(ty->ary_of);
-  return add_lvar(ty, node->name);
+  return new_var(ty, node->name, true, NULL);
 }
 
 static Node *expr_stmt() {
@@ -886,7 +892,7 @@ static void toplevel() {
 
   char *name = ident();
 
-  // Function
+  // Function prototype or definition
   if (consume('(')) {
     Vector *params = new_vec();
     while (!consume(')')) {
@@ -895,39 +901,44 @@ static void toplevel() {
       vec_push(params, param_declaration());
     }
 
-    Token *t = tokens->data[pos];
-    Node *node = new_node(ND_DECL, t);
+    if (consume(';')) {
+      // Function prototype
+      // XXX: not implemented
+    } else {
+      // Function definition
+      lvars = new_vec();
+      breaks = new_vec();
+      continues = new_vec();
+      switches = new_vec();
 
-    lvars = new_vec();
-    breaks = new_vec();
-    continues = new_vec();
-    switches = new_vec();
+      // add function itself to lvars.
+      // this should be placed at the first of lvars.
+      Type *funty = calloc(1, sizeof(Type));
+      funty->ty = FUNC;
+      funty->returning = ty;
+      add_lvar(funty, name);
 
-    node->name = name;
-    node->params = params;
+      Token *t = tokens->data[pos];
+      Node *node = new_node(ND_FUNC, t);
+      node->name = name;
+      node->params = params;
+      node->ty = funty;
 
-    node->ty = calloc(1, sizeof(Type));
-    node->ty->ty = FUNC;
-    node->ty->returning = ty;
+      for (int i=0; i < params->len; i++)
+        add_var_to_lvars(params->data[i]);
 
-    add_lvar(node->ty, name);
+      expect('{');
+      if (is_typedef)
+        bad_token(t, "typedef has function definition");
+      node->body = compound_stmt();
 
-    if (consume(';'))
-      return;
-
-    node->op = ND_FUNC;
-    t = tokens->data[pos];
-    expect('{');
-    if (is_typedef)
-      bad_token(t, "typedef has function definition");
-    node->body = compound_stmt();
-
-    Function *fn = calloc(1, sizeof(Function));
-    fn->name = name;
-    fn->node = node;
-    fn->lvars = lvars;
-    fn->bbs = new_vec();
-    vec_push(prog->funcs, fn);
+      Function *fn = calloc(1, sizeof(Function));
+      fn->name = name;
+      fn->node = node;
+      fn->lvars = lvars;
+      fn->bbs = new_vec();
+      vec_push(prog->funcs, fn);
+    }
     return;
   }
 
