@@ -57,22 +57,16 @@ static void unget(Token *t) {
   assert(tokens->data[pos] == t);
 }
 
+//
+// env utils
+//
 typedef struct Env {
   Map *vars;
   Map *typedefs;
   Map *tags;
   struct Env *prev;
 } Env;
-
-static Program *prog;
-static Vector *lvars;
-static Vector *breaks;
-static Vector *continues;
-static Vector *switches;
-
 struct Env *env;
-
-static Node null_stmt = {ND_NULL};
 
 static Env *new_env(Env *prev) {
   Env *env = calloc(1, sizeof(Env));
@@ -81,6 +75,15 @@ static Env *new_env(Env *prev) {
   env->tags = new_map();
   env->prev = prev;
   return env;
+}
+
+static void push_env() {
+  env = new_env(env);
+}
+
+static void pop_env() {
+  assert(env);
+  env = env->prev;
 }
 
 static Var *find_var(char *name) {
@@ -109,6 +112,15 @@ static Type *find_tag(char *name) {
   }
   return NULL;
 }
+
+static Program *prog;
+
+static Vector *lvars;
+static Vector *breaks;
+static Vector *continues;
+static Vector *switches;
+
+static Node null_stmt = {ND_NULL};
 
 static Var *new_var(Type *ty, char *name, bool is_local, char *data) {
   Var *var = calloc(1, sizeof(Var));
@@ -323,12 +335,12 @@ static Node *stmt_expr() {
   Token *t = peek();
   Vector *v = new_vec();
 
-  env = new_env(env);
+  push_env();
   do {
     vec_push(v, stmt());
   } while (!consume('}'));
   expect(')');
-  env = env->prev;
+  pop_env();
 
   Node *last = vec_pop(v);
   if (last->op != ND_EXPR_STMT)
@@ -772,7 +784,7 @@ static Node *stmt() {
   case TK_FOR: {
     Node *node = new_node(ND_FOR, t);
     expect('(');
-    env = new_env(env);
+    push_env();
     vec_push(breaks, node);
     vec_push(continues, node);
 
@@ -795,7 +807,7 @@ static Node *stmt() {
 
     vec_pop(breaks);
     vec_pop(continues);
-    env = env->prev;
+    pop_env();
     return node;
   }
   case TK_WHILE: {
@@ -876,9 +888,9 @@ static Node *stmt() {
     return node;
   }
   case '{': {
-    env = new_env(env);
+    push_env();
     Node *node = compound_stmt();
-    env = env->prev;
+    pop_env();
     return node;
   }
   case ';':
@@ -946,12 +958,12 @@ static void toplevel() {
       if (is_typedef)
         bad_token(t, "typedef has function definition");
 
-      env = new_env(env);
+      push_env();
       for (int i=0; i < params->len; i++)
         add_var_to_lvars(params->data[i]);
 
       node->body = compound_stmt();
-      env = env->prev;
+      pop_env();
 
       Function *fn = calloc(1, sizeof(Function));
       fn->name = name;
