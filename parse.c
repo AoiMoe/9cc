@@ -86,6 +86,19 @@ static void pop_env() {
   env = env->prev;
 }
 
+static Var *new_var(Type *ty, char *name, bool is_local, char *data) {
+  Var *var = calloc(1, sizeof(Var));
+  var->ty = ty;
+  var->is_local = is_local;
+  var->name = name;
+  var->data = data;
+  return var;
+}
+
+static void add_var(Var *var) {
+  map_put(env->vars, var->name, var);
+}
+
 static Var *find_var(char *name) {
   for (Env *e = env; e; e = e->prev) {
     Var *var = map_get(e->vars, name);
@@ -122,33 +135,15 @@ static Vector *switches;
 
 static Node null_stmt = {ND_NULL};
 
-static Var *new_var(Type *ty, char *name, bool is_local, char *data) {
-  Var *var = calloc(1, sizeof(Var));
-  var->ty = ty;
-  var->is_local = is_local;
-  var->name = name;
-  var->data = data;
-  return var;
-}
-
-static Var *add_var_to_lvars(Var *var) {
+static void alloc_local_storage(Var *var) {
   assert(var->is_local);
   assert(env->prev != NULL);
-  map_put(env->vars, var->name, var);
   vec_push(lvars, var);
-  return var;
 }
 
-static Var *add_lvar(Type *ty, char *name) {
-  return add_var_to_lvars(new_var(ty, name, true, NULL));
-}
-
-static Var *add_gvar(Type *ty, char *name, char *data, bool is_extern) {
-  Var *var = new_var(ty, name, false, data);
-  map_put(env->vars, name, var);
-  if (!is_extern)
-    vec_push(prog->gvars, var);
-  return var;
+static void alloc_global_storage(Var *var) {
+  assert(!var->is_local);
+  vec_push(prog->gvars, var);
 }
 
 static Node *assign();
@@ -294,7 +289,8 @@ static Node *string_literal(Token *t) {
 
   Node *node = new_node(ND_VARREF, t);
   node->ty = ty;
-  node->var = add_gvar(ty, name, t->str, false);
+  node->var = new_var(ty, name, false, t->str);
+  alloc_global_storage(node->var);
   return node;
 }
 
@@ -398,8 +394,10 @@ static Node *new_stmt_expr(Token *t, Vector *exprs) {
 static Node *new_post_inc(Token *t, Node *e, int imm) {
   Vector *v = new_vec();
 
-  Var *var1 = add_lvar(ptr_to(e->ty), "tmp");
-  Var *var2 = add_lvar(e->ty, "tmp");
+  Var *var1 = new_var(ptr_to(e->ty), ".tmp", true, NULL);
+  alloc_local_storage(var1);
+  Var *var2 = new_var(e->ty, ".tmp", true, NULL);
+  alloc_local_storage(var2);
 
   vec_push(v, new_binop('=', t, new_varref(t, var1), new_expr(ND_ADDR, t, e)));
   vec_push(v, new_binop('=', t, new_varref(t, var2), new_deref(t, var1)));
@@ -611,7 +609,8 @@ static Node *new_assign_eq(int op, Node *lhs, Node *rhs) {
   Token *t = lhs->token;
 
   // T *z = &x
-  Var *var = add_lvar(ptr_to(lhs->ty), "tmp");
+  Var *var = new_var(ptr_to(lhs->ty), ".tmp", true, NULL);
+  alloc_local_storage(var);
   vec_push(v, new_binop('=', t, new_varref(t, var), new_expr(ND_ADDR, t, lhs)));
 
   // *z = *z op y
@@ -728,7 +727,9 @@ static Node *declaration() {
   Type *ty = decl_specifiers();
   Node *node = declarator(ty);
   expect(';');
-  Var *var = add_lvar(node->ty, node->name);
+  Var *var = new_var(node->ty, node->name, true, NULL);
+  add_var(var);
+  alloc_local_storage(var);
 
   if (!node->init)
     return &null_stmt;
@@ -946,7 +947,7 @@ static void toplevel() {
       Type *funty = calloc(1, sizeof(Type));
       funty->ty = FUNC;
       funty->returning = ty;
-      map_put(env->vars, name, new_var(funty, name, false, NULL));
+      add_var(new_var(funty, name, false, NULL));
 
       Token *t = peek();
       Node *node = new_node(ND_FUNC, t);
@@ -959,8 +960,10 @@ static void toplevel() {
         bad_token(t, "typedef has function definition");
 
       push_env();
-      for (int i=0; i < params->len; i++)
-        add_var_to_lvars(params->data[i]);
+      for (int i=0; i < params->len; i++) {
+        add_var(params->data[i]);
+        alloc_local_storage(params->data[i]);
+      }
 
       node->body = compound_stmt();
       pop_env();
@@ -984,7 +987,10 @@ static void toplevel() {
   }
 
   // Global variable
-  add_gvar(ty, name, NULL, is_extern);
+  Var *var = new_var(ty, name, false, NULL);
+  add_var(var);
+  if (!is_extern)
+    alloc_global_storage(var);
 }
 
 static bool is_eof() {
