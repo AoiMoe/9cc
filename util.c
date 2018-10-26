@@ -129,6 +129,7 @@ char *sb_get(StringBuilder *sb) {
 }
 
 int roundup(int x, int align) {
+  assert(align > 0);
   return (x + align - 1) & ~(align - 1);
 }
 
