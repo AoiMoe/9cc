@@ -17,6 +17,46 @@
 
 int nlabel = 1;
 
+//
+// token utils
+//
+static Vector *tokens;
+static int pos;
+
+static void expect(int ty) {
+  Token *t = tokens->data[pos];
+  if (t->ty == ty) {
+    pos++;
+    return;
+  }
+
+  if (isprint(ty))
+    bad_token(t, format("%c expected", ty));
+  assert(ty == TK_WHILE);
+  bad_token(t, "'while' expected");
+}
+
+static bool consume(int ty) {
+  Token *t = tokens->data[pos];
+  if (t->ty != ty)
+    return false;
+  pos++;
+  return true;
+}
+
+static Token *peek() {
+  return tokens->data[pos];
+}
+
+static Token *get() {
+  return tokens->data[pos++];
+}
+
+static void unget(Token *t) {
+  pos--;
+  assert(tokens->data[pos] == t);
+}
+
 typedef struct Env {
   Map *vars;
   Map *typedefs;
@@ -30,8 +70,6 @@ static Vector *breaks;
 static Vector *continues;
 static Vector *switches;
 
-static Vector *tokens;
-static int pos;
 struct Env *env;
 
 static Node null_stmt = {ND_NULL};
@@ -105,29 +143,8 @@ static Node *assign();
 static Node *expr();
 static Node *stmt();
 
-static void expect(int ty) {
-  Token *t = tokens->data[pos];
-  if (t->ty == ty) {
-    pos++;
-    return;
-  }
-
-  if (isprint(ty))
-    bad_token(t, format("%c expected", ty));
-  assert(ty == TK_WHILE);
-  bad_token(t, "'while' expected");
-}
-
-static bool consume(int ty) {
-  Token *t = tokens->data[pos];
-  if (t->ty != ty)
-    return false;
-  pos++;
-  return true;
-}
-
 static bool is_typename() {
-  Token *t = tokens->data[pos];
+  Token *t = peek();
   if (t->ty == TK_IDENT)
     return find_typedef(t->name);
   return t->ty == TK_INT || t->ty == TK_CHAR || t->ty == TK_VOID ||
@@ -153,12 +170,12 @@ static void fix_struct_offsets(Type *ty) {
 }
 
 static Type *decl_specifiers() {
-  Token *t = tokens->data[pos++];
+  Token *t = get();
 
   if (t->ty == TK_IDENT) {
     Type *ty = find_typedef(t->name);
     if (!ty)
-      pos--;
+      unget(t);
     return ty;
   }
 
@@ -179,12 +196,11 @@ static Type *decl_specifiers() {
   }
 
   if (t->ty == TK_STRUCT) {
-    Token *t = tokens->data[pos];
+    Token *t = peek();
     Type *ty = NULL;
     char *tag = NULL;
 
-    if (t->ty == TK_IDENT) {
-      pos++;
+    if (consume(TK_IDENT)) {
       tag = t->name;
       ty = find_tag(tag);
     }
@@ -254,7 +270,7 @@ Node *new_int_node(int val, Token *t) {
 static Node *compound_stmt();
 
 static char *ident() {
-  Token *t = tokens->data[pos++];
+  Token *t = get();
   if (t->ty != TK_IDENT)
     bad_token(t, "identifier expected");
   return t->name;
@@ -304,7 +320,7 @@ static Node *function_call(Token *t) {
 }
 
 static Node *stmt_expr() {
-  Token *t = tokens->data[pos];
+  Token *t = peek();
   Vector *v = new_vec();
 
   env = new_env(env);
@@ -325,7 +341,7 @@ static Node *stmt_expr() {
 }
 
 static Node *primary() {
-  Token *t = tokens->data[pos++];
+  Token *t = get();
 
   if (t->ty == '(') {
     if (consume('{'))
@@ -386,7 +402,7 @@ static Node *postfix() {
   Node *lhs = primary();
 
   for (;;) {
-    Token *t = tokens->data[pos];
+    Token *t = peek();
 
     if (consume(TK_INC)) {
       lhs = new_post_inc(t, lhs, 1);
@@ -423,7 +439,7 @@ static Node *postfix() {
 static Node *new_assign_eq(int op, Node *lhs, Node *rhs);
 
 static Node *unary() {
-  Token *t = tokens->data[pos];
+  Token *t = peek();
 
   if (consume('-'))
     return new_binop('-', t, new_int_node(0, t), unary());
@@ -449,7 +465,7 @@ static Node *unary() {
 static Node *mul() {
   Node *lhs = unary();
   for (;;) {
-    Token *t = tokens->data[pos];
+    Token *t = peek();
     if (consume('*'))
       lhs = new_binop('*', t, lhs, unary());
     else if (consume('/'))
@@ -464,7 +480,7 @@ static Node *mul() {
 static Node *add() {
   Node *lhs = mul();
   for (;;) {
-    Token *t = tokens->data[pos];
+    Token *t = peek();
     if (consume('+'))
       lhs = new_binop('+', t, lhs, mul());
     else if (consume('-'))
@@ -477,7 +493,7 @@ static Node *add() {
 static Node *shift() {
   Node *lhs = add();
   for (;;) {
-    Token *t = tokens->data[pos];
+    Token *t = peek();
     if (consume(TK_SHL))
       lhs = new_binop(ND_SHL, t, lhs, add());
     else if (consume(TK_SHR))
@@ -490,7 +506,7 @@ static Node *shift() {
 static Node *relational() {
   Node *lhs = shift();
   for (;;) {
-    Token *t = tokens->data[pos];
+    Token *t = peek();
     if (consume('<'))
       lhs = new_binop('<', t, lhs, shift());
     else if (consume('>'))
@@ -507,7 +523,7 @@ static Node *relational() {
 static Node *equality() {
   Node *lhs = relational();
   for (;;) {
-    Token *t = tokens->data[pos];
+    Token *t = peek();
     if (consume(TK_EQ))
       lhs = new_binop(ND_EQ, t, lhs, relational());
     else if (consume(TK_NE))
@@ -520,7 +536,7 @@ static Node *equality() {
 static Node *bit_and() {
   Node *lhs = equality();
   while (consume('&')) {
-    Token *t = tokens->data[pos];
+    Token *t = peek();
     lhs = new_binop('&', t, lhs, equality());
   }
   return lhs;
@@ -529,7 +545,7 @@ static Node *bit_and() {
 static Node *bit_xor() {
   Node *lhs = bit_and();
   while (consume('^')) {
-    Token *t = tokens->data[pos];
+    Token *t = peek();
     lhs = new_binop('^', t, lhs, bit_and());
   }
   return lhs;
@@ -538,7 +554,7 @@ static Node *bit_xor() {
 static Node *bit_or() {
   Node *lhs = bit_xor();
   while (consume('|')) {
-    Token *t = tokens->data[pos];
+    Token *t = peek();
     lhs = new_binop('|', t, lhs, bit_xor());
   }
   return lhs;
@@ -547,7 +563,7 @@ static Node *bit_or() {
 static Node *logand() {
   Node *lhs = bit_or();
   while (consume(TK_LOGAND)) {
-    Token *t = tokens->data[pos];
+    Token *t = peek();
     lhs = new_binop(ND_LOGAND, t, lhs, bit_or());
   }
   return lhs;
@@ -556,7 +572,7 @@ static Node *logand() {
 static Node *logor() {
   Node *lhs = logand();
   while (consume(TK_LOGOR)) {
-    Token *t = tokens->data[pos];
+    Token *t = peek();
     lhs = new_binop(ND_LOGOR, t, lhs, logand());
   }
   return lhs;
@@ -564,7 +580,7 @@ static Node *logor() {
 
 static Node *conditional() {
   Node *cond = logor();
-  Token *t = tokens->data[pos];
+  Token *t = peek();
   if (!consume('?'))
     return cond;
 
@@ -594,7 +610,7 @@ static Node *new_assign_eq(int op, Node *lhs, Node *rhs) {
 
 static Node *assign() {
   Node *lhs = conditional();
-  Token *t = tokens->data[pos];
+  Token *t = peek();
 
   if (consume('='))
     return new_binop('=', t, lhs, assign());
@@ -623,14 +639,14 @@ static Node *assign() {
 
 static Node *expr() {
   Node *lhs = assign();
-  Token *t = tokens->data[pos];
+  Token *t = peek();
   if (!consume(','))
     return lhs;
   return new_binop(',', t, lhs, expr());
 }
 
 static int const_expr() {
-  Token *t = tokens->data[pos];
+  Token *t = peek();
   Node *node = expr();
   if (node->op != ND_NUM)
     bad_token(t, "constant expression expected");
@@ -659,7 +675,7 @@ static Type *read_array(Type *ty) {
 static Node *declarator(Type *ty);
 
 static Node *direct_decl(Type *ty) {
-  Token *t = tokens->data[pos];
+  Token *t = peek();
   Node *node;
   Type *placeholder = calloc(1, sizeof(Type));
 
@@ -725,14 +741,14 @@ static Var *param_declaration() {
 }
 
 static Node *expr_stmt() {
-  Token *t = tokens->data[pos];
+  Token *t = peek();
   Node *node = new_expr(ND_EXPR_STMT, t, expr());
   expect(';');
   return node;
 }
 
 static Node *stmt() {
-  Token *t = tokens->data[pos++];
+  Token *t = get();
 
   switch (t->ty) {
   case TK_TYPEDEF: {
@@ -868,7 +884,7 @@ static Node *stmt() {
   case ';':
     return &null_stmt;
   default:
-    pos--;
+    unget(t);
     if (is_typename())
       return declaration();
     return expr_stmt();
@@ -876,7 +892,7 @@ static Node *stmt() {
 }
 
 static Node *compound_stmt() {
-  Token *t = tokens->data[pos];
+  Token *t = peek();
   Node *node = new_node(ND_COMP_STMT, t);
   node->stmts = new_vec();
 
@@ -920,7 +936,7 @@ static void toplevel() {
       funty->returning = ty;
       map_put(env->vars, name, new_var(funty, name, false, NULL));
 
-      Token *t = tokens->data[pos];
+      Token *t = peek();
       Node *node = new_node(ND_FUNC, t);
       node->name = name;
       node->params = params;
@@ -960,7 +976,7 @@ static void toplevel() {
 }
 
 static bool is_eof() {
-  Token *t = tokens->data[pos];
+  Token *t = peek();
   return t->ty == TK_EOF;
 }
 
