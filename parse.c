@@ -83,6 +83,7 @@ static Var *new_var(Type *ty, char *name, bool is_local, char *data) {
 
 static Var *add_var_to_lvars(Var *var) {
   assert(var->is_local);
+  assert(env->prev != NULL);
   map_put(env->vars, var->name, var);
   vec_push(lvars, var);
   return var;
@@ -914,12 +915,10 @@ static void toplevel() {
       continues = new_vec();
       switches = new_vec();
 
-      // add function itself to lvars.
-      // this should be placed at the first of lvars.
       Type *funty = calloc(1, sizeof(Type));
       funty->ty = FUNC;
       funty->returning = ty;
-      add_lvar(funty, name);
+      map_put(env->vars, name, new_var(funty, name, false, NULL));
 
       Token *t = tokens->data[pos];
       Node *node = new_node(ND_FUNC, t);
