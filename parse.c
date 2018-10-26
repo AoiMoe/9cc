@@ -58,32 +58,32 @@ static void unget(Token *t) {
 }
 
 //
-// env utils
+// scope utils
 //
-typedef struct Env {
+typedef struct Scope {
   Map *vars;
   Map *typedefs;
   Map *tags;
-  struct Env *prev;
-} Env;
-struct Env *env;
+  struct Scope *prev;
+} Scope;
+struct Scope *scope;
 
-static Env *new_env(Env *prev) {
-  Env *env = calloc(1, sizeof(Env));
-  env->vars = new_map();
-  env->typedefs = new_map();
-  env->tags = new_map();
-  env->prev = prev;
-  return env;
+static Scope *new_scope(Scope *prev) {
+  Scope *scope = calloc(1, sizeof(Scope));
+  scope->vars = new_map();
+  scope->typedefs = new_map();
+  scope->tags = new_map();
+  scope->prev = prev;
+  return scope;
 }
 
-static void push_env() {
-  env = new_env(env);
+static void push_scope() {
+  scope = new_scope(scope);
 }
 
-static void pop_env() {
-  assert(env);
-  env = env->prev;
+static void pop_scope() {
+  assert(scope);
+  scope = scope->prev;
 }
 
 static Var *new_var(Type *ty, char *name, bool is_local, char *data) {
@@ -96,11 +96,11 @@ static Var *new_var(Type *ty, char *name, bool is_local, char *data) {
 }
 
 static void add_var(Var *var) {
-  map_put(env->vars, var->name, var);
+  map_put(scope->vars, var->name, var);
 }
 
 static Var *find_var(char *name) {
-  for (Env *e = env; e; e = e->prev) {
+  for (Scope *e = scope; e; e = e->prev) {
     Var *var = map_get(e->vars, name);
     if (var)
       return var;
@@ -109,7 +109,7 @@ static Var *find_var(char *name) {
 }
 
 static Type *find_typedef(char *name) {
-  for (Env *e = env; e; e = e->prev) {
+  for (Scope *e = scope; e; e = e->prev) {
     Type *ty = map_get(e->typedefs, name);
     if (ty)
       return ty;
@@ -118,7 +118,7 @@ static Type *find_typedef(char *name) {
 }
 
 static Type *find_tag(char *name) {
-  for (Env *e = env; e; e = e->prev) {
+  for (Scope *e = scope; e; e = e->prev) {
     Type *ty = map_get(e->tags, name);
     if (ty)
       return ty;
@@ -137,7 +137,7 @@ static Node null_stmt = {ND_NULL};
 
 static void alloc_local_storage(Var *var) {
   assert(var->is_local);
-  assert(env->prev != NULL);
+  assert(scope->prev != NULL);
   vec_push(lvars, var);
 }
 
@@ -229,7 +229,7 @@ static Type *decl_specifiers() {
     if (!tag && !ty->members)
       bad_token(t, "bad struct definition");
     if (tag)
-      map_put(env->tags, tag, ty);
+      map_put(scope->tags, tag, ty);
     return ty;
   }
 
@@ -331,12 +331,12 @@ static Node *stmt_expr() {
   Token *t = peek();
   Vector *v = new_vec();
 
-  push_env();
+  push_scope();
   do {
     vec_push(v, stmt());
   } while (!consume('}'));
   expect(')');
-  pop_env();
+  pop_scope();
 
   Node *last = vec_pop(v);
   if (last->op != ND_EXPR_STMT)
@@ -767,7 +767,7 @@ static Node *stmt() {
   case TK_TYPEDEF: {
     Node *node = declaration_type();
     assert(node->name);
-    map_put(env->typedefs, node->name, node->ty);
+    map_put(scope->typedefs, node->name, node->ty);
     return &null_stmt;
   }
   case TK_IF: {
@@ -785,7 +785,7 @@ static Node *stmt() {
   case TK_FOR: {
     Node *node = new_node(ND_FOR, t);
     expect('(');
-    push_env();
+    push_scope();
     vec_push(breaks, node);
     vec_push(continues, node);
 
@@ -808,7 +808,7 @@ static Node *stmt() {
 
     vec_pop(breaks);
     vec_pop(continues);
-    pop_env();
+    pop_scope();
     return node;
   }
   case TK_WHILE: {
@@ -889,9 +889,9 @@ static Node *stmt() {
     return node;
   }
   case '{': {
-    push_env();
+    push_scope();
     Node *node = compound_stmt();
-    pop_env();
+    pop_scope();
     return node;
   }
   case ';':
@@ -959,14 +959,14 @@ static void toplevel() {
       if (is_typedef)
         bad_token(t, "typedef has function definition");
 
-      push_env();
+      push_scope();
       for (int i=0; i < params->len; i++) {
         add_var(params->data[i]);
         alloc_local_storage(params->data[i]);
       }
 
       node->body = compound_stmt();
-      pop_env();
+      pop_scope();
 
       Function *fn = calloc(1, sizeof(Function));
       fn->name = name;
@@ -982,7 +982,7 @@ static void toplevel() {
   expect(';');
 
   if (is_typedef) {
-    map_put(env->typedefs, name, ty);
+    map_put(scope->typedefs, name, ty);
     return;
   }
 
@@ -1001,7 +1001,7 @@ static bool is_eof() {
 Program *parse(Vector *tokens_) {
   tokens = tokens_;
   pos = 0;
-  env = new_env(NULL);
+  scope = new_scope(NULL);
 
   prog = calloc(1, sizeof(Program));
   prog->gvars = new_vec();
