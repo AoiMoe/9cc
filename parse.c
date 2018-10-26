@@ -858,8 +858,12 @@ static Node *stmt() {
     expect(';');
     return node;
   }
-  case '{':
-    return compound_stmt();
+  case '{': {
+    env = new_env(env);
+    Node *node = compound_stmt();
+    env = env->prev;
+    return node;
+  }
   case ';':
     return &null_stmt;
   default:
@@ -875,10 +879,9 @@ static Node *compound_stmt() {
   Node *node = new_node(ND_COMP_STMT, t);
   node->stmts = new_vec();
 
-  env = new_env(env);
   while (!consume('}'))
     vec_push(node->stmts, stmt());
-  env = env->prev;
+
   return node;
 }
 
@@ -924,13 +927,16 @@ static void toplevel() {
       node->params = params;
       node->ty = funty;
 
-      for (int i=0; i < params->len; i++)
-        add_var_to_lvars(params->data[i]);
-
       expect('{');
       if (is_typedef)
         bad_token(t, "typedef has function definition");
+
+      env = new_env(env);
+      for (int i=0; i < params->len; i++)
+        add_var_to_lvars(params->data[i]);
+
       node->body = compound_stmt();
+      env = env->prev;
 
       Function *fn = calloc(1, sizeof(Function));
       fn->name = name;
